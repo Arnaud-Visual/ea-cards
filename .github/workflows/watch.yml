@@ -6,8 +6,7 @@ on:
     - cron: "*/10 * * * *"   # toutes les 10 minutes
 
 permissions:
-  contents: write            # on veut pouvoir mettre à jour seen.json
-
+  contents: write            # autorise le push de seen.json
 
 jobs:
   run:
@@ -29,19 +28,6 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           URL_TEMPLATE: ${{ secrets.URL_TEMPLATE }}
         run: python watcher_discord.py
-
-            - name: Commit updated seen.json (if changed)
-      run: |
-        if git diff --quiet --exit-code seen.json; then
-          echo "No changes in seen.json"
-        else
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add seen.json
-          git commit -m "Update seen.json [skip ci]"
-          git push
-        fi
-
 
       - name: Commit seen.json if changed
         uses: stefanzweifel/git-auto-commit-action@v5
