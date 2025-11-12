@@ -1,5 +1,4 @@
 import os, json, re, time, hashlib
-from urllib.parse import urlparse
 import requests
 
 WATCH_URL = os.getenv("WATCH_URL", "").strip()
@@ -12,6 +11,20 @@ HEADERS = {"User-Agent": "Mozilla/5.0 (ea-cards-watcher)"}
 
 UUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 PNG_URL_RE = re.compile(r"https?://[^\"'\\s]+?\\.png")
+
+# -------------------------------------------------------------
+# ⭐ Fonction utilitaire pour tester plusieurs suffixes (_0, _1, _2, _3)
+# -------------------------------------------------------------
+def generate_possible_urls(template, guid):
+    urls = []
+    # formats les plus communs
+    suffixes = ["_0.png", "_1.png", "_2.png", "_3.png", "_4.png"]
+    for s in suffixes:
+        urls.append(template.replace("{guid}", guid).replace("_0.png", s))
+    # inclut aussi la version sans suffixe
+    urls.append(template.replace("{guid}", guid))
+    return urls
+# -------------------------------------------------------------
 
 def load_seen():
     try:
@@ -30,7 +43,6 @@ def fetch_json(url):
     try:
         return r.json()
     except Exception:
-        # parfois, EA renvoie du JSON “texte”. On tente une 2e fois.
         return json.loads(r.text)
 
 def walk_values(obj):
@@ -75,14 +87,14 @@ def main():
     seen = load_seen()
     root = fetch_json(WATCH_URL)
 
-    # 1) Récupère toutes les URLs .png présentes directement dans le JSON
+    # 1️⃣ Récupère les URLs PNG directes
     direct_pngs = []
     for v in walk_values(root):
         if isinstance(v, str):
             direct_pngs.extend(PNG_URL_RE.findall(v))
     direct_pngs = uniq(direct_pngs)
 
-    # 2) Récupère tous les GUID (pour construction d’URL si URL_TEMPLATE fourni)
+    # 2️⃣ Récupère tous les GUIDs
     guids = []
     for v in walk_values(root):
         if isinstance(v, str):
@@ -90,16 +102,18 @@ def main():
                 guids.append(m.lower())
     guids = uniq(guids)
 
-    # Construit des URLs à partir d’un template si fourni
+    # 3️⃣ Construit des URLs à partir du template
     templated_pngs = []
     if URL_TEMPLATE and "{guid}" in URL_TEMPLATE:
-        templated_pngs = [URL_TEMPLATE.replace("{guid}", g) for g in guids]
+        for g in guids:
+            for u in generate_possible_urls(URL_TEMPLATE, g):  # ⭐ teste plusieurs variantes
+                templated_pngs.append(u)
 
     candidates = uniq(direct_pngs + templated_pngs)
 
+    # 4️⃣ Vérifie et envoie les nouvelles images
     new_sent = 0
     for url in candidates:
-        # id unique stable
         uid = hashlib.sha1(url.encode("utf-8")).hexdigest()
         if uid in seen:
             continue
@@ -108,13 +122,12 @@ def main():
                 discord_embed(url)
                 new_sent += 1
                 seen.add(uid)
-                time.sleep(0.6)  # évite de spammer Discord
+                time.sleep(0.6)
             except Exception as e:
-                # on n'enregistre pas comme “seen” si envoi échoue
                 print("Discord error:", e)
 
     save_seen(seen)
-    print(f"Done. {new_sent} nouvelles cartes envoyées.")
+    print(f"✅ Terminé. {new_sent} nouvelles cartes envoyées.")
 
 if __name__ == "__main__":
     main()
