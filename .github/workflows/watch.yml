@@ -3,10 +3,10 @@ name: Watch EA Cards
 on:
   workflow_dispatch:
   schedule:
-    - cron: "*/10 * * * *"   # toutes les 10 minutes
+    - cron: "*/10 * * * *"   # toutes les 10 min
 
 permissions:
-  contents: write            # autorise le push de seen.json
+  contents: write
 
 jobs:
   run:
@@ -29,8 +29,14 @@ jobs:
           URL_TEMPLATE: ${{ secrets.URL_TEMPLATE }}
         run: python watcher_discord.py
 
-      - name: Commit seen.json if changed
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "chore: update seen.json"
-          file_pattern: seen.json
+      - name: Commit updated seen.json (if changed)
+        run: |
+          if git diff --quiet --exit-code seen.json; then
+            echo "No changes in seen.json"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add seen.json
+            git commit -m "Update seen.json [skip ci]"
+            git push
+          fi
