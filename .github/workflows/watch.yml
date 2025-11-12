@@ -1,0 +1,36 @@
+name: Watch EA Cards
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "*/5 * * * *"  # toutes les 5 minutes
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Run watcher
+        env:
+          WATCH_URL: ${{ secrets.WATCH_URL }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          URL_TEMPLATE: ${{ secrets.URL_TEMPLATE }}
+        run: python watcher_discord.py
+
+      - name: Commit seen.json if changed
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: update seen.json"
+          file_pattern: seen.json
