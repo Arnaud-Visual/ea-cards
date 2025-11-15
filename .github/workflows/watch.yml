@@ -1,9 +1,9 @@
 name: Watch EA Cards
 
 on:
-  workflow_dispatch:
   schedule:
-    - cron: "*/10 * * * *"   # toutes les 10 min
+    - cron: "*/10 * * * *"   # toutes les 10 minutes
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -11,8 +11,10 @@ permissions:
 jobs:
   run:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -29,14 +31,20 @@ jobs:
           URL_TEMPLATE: ${{ secrets.URL_TEMPLATE }}
         run: python watcher_discord.py
 
-      - name: Commit updated seen.json (if changed)
+      - name: Check if seen.json changed
+        id: changes
         run: |
           if git diff --quiet --exit-code seen.json; then
-            echo "No changes in seen.json"
+            echo "changed=false" >> $GITHUB_OUTPUT
           else
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add seen.json
-            git commit -m "Update seen.json [skip ci]"
-            git push
+            echo "changed=true" >> $GITHUB_OUTPUT
           fi
+
+      - name: Commit updated seen.json
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add seen.json
+          git commit -m "Update seen.json [skip ci]"
+          git push
