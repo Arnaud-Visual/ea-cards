@@ -3,7 +3,7 @@ import requests
 
 WATCH_URL = os.getenv("WATCH_URL", "").strip()
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
-URL_TEMPLATE = os.getenv("URL_TEMPLATE", "").strip()  # ex: https://.../itemBGs/{guid}/cards_bg_s_1_44_0.png
+URL_TEMPLATE = os.getenv("URL_TEMPLATE", "").strip()  # ex: https://.../{guid}/cards_bg_s_1_{id}_0.png
 
 SEEN_PATH = "seen.json"
 TIMEOUT = 12
@@ -16,19 +16,25 @@ PNG_URL_RE = re.compile(r"https?://[^\"'\\s]+?\\.(?:png|PNG|webp|WEBP)")
 UUID_RE = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 
 
-# -------------------------------------------------------------
-# ⭐ Fonction utilitaire pour tester plusieurs suffixes (_0, _1, _2, _3, _4)
-# -------------------------------------------------------------
-def generate_possible_urls(template, guid):
+def generate_possible_urls(template, guid, id_value=None):
+    """
+    Construit une liste d'URLs possibles à partir du template,
+    en remplaçant {guid} et éventuellement {id}, puis en testant plusieurs suffixes.
+    """
+    base = template.replace("{guid}", guid)
+    if id_value is not None:
+        base = base.replace("{id}", str(id_value))
+
     urls = []
-    # formats les plus communs
-    suffixes = ["_0.png", "_1.png", "_2.png", "_3.png", "_4.png"]
-    for s in suffixes:
-        urls.append(template.replace("{guid}", guid).replace("_0.png", s))
-    # inclut aussi la version sans suffixe
-    urls.append(template.replace("{guid}", guid))
+    # si le template contient déjà "_0.png", on décline _0.._4
+    if "_0.png" in base:
+        suffixes = ["_0.png", "_1.png", "_2.png", "_3.png", "_4.png"]
+        for s in suffixes:
+            urls.append(base.replace("_0.png", s))
+    else:
+        urls.append(base)
     return urls
-# -------------------------------------------------------------
+
 
 def load_seen():
     try:
@@ -94,6 +100,40 @@ def discord_embed(image_url, title="Nouvelle carte trouvée"):
     print(f"[INFO] Statut HTTP Discord : {r.status_code}")
     r.raise_for_status()
 
+
+# -------------------------------------------------------------
+# 🔍 Nouvelle fonction : trouver des paires (GUID, ID) dans le JSON
+# -------------------------------------------------------------
+def find_guid_id_pairs(obj, pairs):
+    """
+    Parcourt récursivement le JSON.
+    Dès qu'un dict contient :
+      - une valeur string qui matche un GUID
+      - ET une ou plusieurs valeurs entières (petites, type 1..200)
+    on ajoute des paires (guid, id) dans le set `pairs`.
+    """
+    if isinstance(obj, dict):
+        guid = None
+        ids = []
+
+        for k, v in obj.items():
+            if isinstance(v, str) and UUID_RE.fullmatch(v):
+                guid = v.lower()
+            if isinstance(v, int) and 0 < v < 200:  # filtre simple pour éviter les gros nombres
+                ids.append(v)
+
+        if guid and ids:
+            for id_value in ids:
+                pairs.add((guid, id_value))
+
+        for v in obj.values():
+            find_guid_id_pairs(v, pairs)
+
+    elif isinstance(obj, list):
+        for v in obj:
+            find_guid_id_pairs(v, pairs)
+
+
 def main():
     print(f"[INFO] WATCH_URL = {WATCH_URL!r}")
     print(f"[INFO] URL_TEMPLATE = {URL_TEMPLATE!r}")
@@ -107,7 +147,7 @@ def main():
 
     root = fetch_json(WATCH_URL)
 
-    # 1️⃣ Récupère les URLs PNG directes dans le JSON
+    # 1️⃣ Récupère les URLs PNG directes dans le JSON (au cas où)
     direct_pngs = []
     for v in walk_values(root):
         if isinstance(v, str):
@@ -117,23 +157,27 @@ def main():
     if direct_pngs[:3]:
         print("[DEBUG] Exemples PNG directs :", direct_pngs[:3])
 
-    # 2️⃣ Récupère tous les GUIDs
-    guids = []
-    for v in walk_values(root):
-        if isinstance(v, str):
-            for m in UUID_RE.findall(v):
-                guids.append(m.lower())
-    guids = uniq(guids)
-    print(f"[INFO] GUIDs trouvés dans le JSON : {len(guids)}")
-    if guids[:5]:
-        print("[DEBUG] Exemples GUIDs :", guids[:5])
+    # 2️⃣ Trouve des paires (GUID, ID)
+    pairs = set()
+    find_guid_id_pairs(root, pairs)
+    pairs = list(pairs)
+    print(f"[INFO] Paires GUID/ID trouvées : {len(pairs)}")
+    if pairs[:5]:
+        print("[DEBUG] Exemples paires GUID/ID :", pairs[:5])
 
-    # 3️⃣ Construit des URLs à partir du template
+    # 3️⃣ Construit des URLs à partir du template avec {guid} et {id}
     templated_pngs = []
-    if URL_TEMPLATE and "{guid}" in URL_TEMPLATE:
+    if URL_TEMPLATE and "{guid}" in URL_TEMPLATE and "{id}" in URL_TEMPLATE:
+        for guid, id_value in pairs:
+            templated_pngs.extend(generate_possible_urls(URL_TEMPLATE, guid, id_value))
+    elif URL_TEMPLATE and "{guid}" in URL_TEMPLATE:
+        # fallback : ancien comportement si jamais {id} n'est pas dans le template
+        guids = [g for g, _ in pairs] or []
+        guids = uniq(guids)
+        print(f"[INFO] Fallback sans {{id}} : {len(guids)} GUIDs utilisés")
         for g in guids:
-            for u in generate_possible_urls(URL_TEMPLATE, g):
-                templated_pngs.append(u)
+            templated_pngs.extend(generate_possible_urls(URL_TEMPLATE, g))
+
     templated_pngs = uniq(templated_pngs)
     print(f"[INFO] PNG générés via URL_TEMPLATE : {len(templated_pngs)}")
     if templated_pngs[:3]:
